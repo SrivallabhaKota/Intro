@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Pixel Pop Photo Reveal</title>
+
+<style>
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+canvas {
+    position: fixed;
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
+
+    display: block;
+}
+
+#finalImage {
+    position: fixed;
+
+    inset: 0;
+
+    width: 100vw;
+    height: 100vh;
+
+    object-fit: cover;
+
+    opacity: 0;
+
+    pointer-events: none;
+
+    transition: opacity 1s ease;
+}
+
+/* File selection & error overlay */
+#fileOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.9);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    text-align: center;
+    padding: 20px;
+}
+
+.file-btn {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    padding: 12px 28px;
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 30px;
+    cursor: pointer;
+    margin-top: 20px;
+    transition: background 0.2s ease;
+}
+
+.file-btn:hover {
+    background: #1d4ed8;
+}
+
+#fileInput {
+    display: none;
+}
+
+</style>
+</head>
+
+
+<body>
+
+<canvas id="canvas"></canvas>
+
+<!-- Final Photo -->
+<img
+    id="finalImage"
+    alt="Final Photo"
+>
+
+<div id="fileOverlay" style="display: none;">
+    <h2>Select Image from images/ folder</h2>
+    <p style="color: #ccc; margin-top: 8px;">Browser security requires selecting your image when running directly from file link.</p>
+    <button class="file-btn" onclick="document.getElementById('fileInput').click()">Choose Image</button>
+</div>
+
+<input type="file" id="fileInput" accept="image/*">
+
+
+<script>
+
+/*
+    ============================
+    PHOTO SETTINGS & CANDIDATES
+    ============================
+*/
+
+const CANDIDATE_SOURCES = [
+    "images/photo.jpg",
+    "images/photo.jpeg",
+    "images/photo.png",
+    "images/photo.webp",
+    "images/photo.avif",
+    "images/photo.jfif",
+    "images/photo.bmp",
+    "images/photo.gif",
+    "images/photo",
+    "photo.jpg",
+    "photo.jpeg",
+    "photo.png",
+    "photo.webp"
+];
+
+let IMAGE_NAME = "images/photo.jpg";
+
+const REVEAL_TIME = 6000;
+const PARTICLE_STEP = 5;
+const PARTICLE_SIZE = 3;
+const POP_DURATION = 350;
+const BRIGHTNESS = 1.22;
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const finalImage = document.getElementById("finalImage");
+const fileOverlay = document.getElementById("fileOverlay");
+const fileInput = document.getElementById("fileInput");
+
+let image = new Image();
+
+let width = 0;
+let height = 0;
+let imageWidth = 0;
+let imageHeight = 0;
+let imageX = 0;
+let imageY = 0;
+let particles = [];
+let animationStart = 0;
+
+function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+    if (image.complete && image.naturalWidth > 0) {
+        calculateImage();
+    }
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+/*
+    ============================
+    DYNAMIC IMAGE DISCOVERY
+    ============================
+*/
+
+function discoverImage() {
+    let index = 0;
+
+    function tryNext() {
+        if (index < CANDIDATE_SOURCES.length) {
+            const src = CANDIDATE_SOURCES[index];
+            index++;
+
+            const testImg = new Image();
+            testImg.onload = function () {
+                IMAGE_NAME = src;
+                loadPhotoSource(src);
+            };
+            testImg.onerror = function () {
+                tryNext();
+            };
+            testImg.src = src + "?t=" + Date.now();
+        } else {
+            // Show file selector if auto-discovery fails or file:// blocks
+            fileOverlay.style.display = "flex";
+        }
+    }
+
+    tryNext();
+}
+
+function loadPhotoSource(src) {
+    fileOverlay.style.display = "none";
+    finalImage.style.opacity = "0";
+
+    image = new Image();
+    image.onload = function () {
+        calculateImage();
+        const success = createParticles();
+        if (success) {
+            setTimeout(startAnimation, 300);
+        }
+    };
+    image.onerror = function () {
+        fileOverlay.style.display = "flex";
+    };
+    image.src = src;
+    finalImage.src = src;
+}
+
+// Start auto-discovery
+discoverImage();
+
+/*
+    ============================
+    FILE INPUT & DRAG DROP
+    ============================
+*/
+
+fileInput.addEventListener("change", (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+        readAndLoadFile(e.target.files[0]);
+    }
+});
+
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        readAndLoadFile(e.dataTransfer.files[0]);
+    }
+});
+
+function readAndLoadFile(file) {
+    const reader = new FileReader();
+    reader.onload = function (evt) {
+        loadPhotoSource(evt.target.result);
+    };
+    reader.readAsDataURL(file);
+}
+
+function calculateImage() {
+    const originalWidth = image.naturalWidth;
+    const originalHeight = image.naturalHeight;
+
+    const scale = Math.max(
+        width / originalWidth,
+        height / originalHeight
+    );
+
+    imageWidth = Math.ceil(originalWidth * scale);
+    imageHeight = Math.ceil(originalHeight * scale);
+
+    imageX = Math.floor((width - imageWidth) / 2);
+    imageY = Math.floor((height - imageHeight) / 2);
+
+    finalImage.style.width = imageWidth + "px";
+    finalImage.style.height = imageHeight + "px";
+    finalImage.style.left = imageX + "px";
+    finalImage.style.top = imageY + "px";
+}
+
+function createParticles() {
+    particles = [];
+
+    const tempCanvas = document.createElement("canvas");
+    const tempCtx = tempCanvas.getContext("2d");
+
+    tempCanvas.width = imageWidth;
+    tempCanvas.height = imageHeight;
+
+    tempCtx.drawImage(image, 0, 0, imageWidth, imageHeight);
+
+    let imageData;
+    try {
+        imageData = tempCtx.getImageData(0, 0, imageWidth, imageHeight);
+    } catch (err) {
+        console.warn("Canvas tainted on file:// protocol. Prompting file selector...", err);
+        fileOverlay.style.display = "flex";
+        return false;
+    }
+
+    for (let y = 0; y < imageHeight; y += PARTICLE_STEP) {
+        for (let x = 0; x < imageWidth; x += PARTICLE_STEP) {
+            const index = (y * imageWidth + x) * 4;
+            let r = imageData.data[index];
+            let g = imageData.data[index + 1];
+            let b = imageData.data[index + 2];
+            const a = imageData.data[index + 3];
+
+            if (a < 80) continue;
+
+            r = Math.min(255, r * BRIGHTNESS);
+            g = Math.min(255, g * BRIGHTNESS);
+            b = Math.min(255, b * BRIGHTNESS);
+
+            const targetX = imageX + x;
+            const targetY = imageY + y;
+            const delay = Math.random() * (REVEAL_TIME - POP_DURATION);
+
+            particles.push({
+                x: targetX,
+                y: targetY,
+                r: r,
+                g: g,
+                b: b,
+                size: PARTICLE_SIZE,
+                delay: delay
+            });
+        }
+    }
+    return true;
+}
+
+function easeOutBack(t) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+function startAnimation() {
+    animationStart = performance.now();
+    requestAnimationFrame(animate);
+}
+
+function animate(timestamp) {
+    const elapsed = timestamp - animationStart;
+    ctx.clearRect(0, 0, width, height);
+
+    for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        const localTime = elapsed - p.delay;
+
+        if (localTime <= 0) continue;
+
+        let progress = localTime / POP_DURATION;
+        progress = Math.max(0, Math.min(1, progress));
+
+        const pop = easeOutBack(progress);
+        const size = Math.max(0, p.size * pop);
+
+        ctx.fillStyle = 'rgb(' + Math.round(p.r) + ',' + Math.round(p.g) + ',' + Math.round(p.b) + ')';
+        ctx.fillRect(p.x - size / 2, p.y - size / 2, size, size);
+    }
+
+    if (elapsed < REVEAL_TIME + POP_DURATION) {
+        requestAnimationFrame(animate);
+    } else {
+        finishReveal();
+    }
+}
+
+function finishReveal() {
+    ctx.clearRect(0, 0, width, height);
+
+    for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        ctx.fillStyle = 'rgb(' + Math.round(p.r) + ',' + Math.round(p.g) + ',' + Math.round(p.b) + ')';
+        ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+
+    setTimeout(revealPhoto, 700);
+}
+
+function revealPhoto() {
+    finalImage.style.opacity = "1";
+}
+
+</script>
+
+</body>
+</html>
