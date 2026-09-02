@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 
 <title>Pixel Pop Photo Reveal</title>
 
@@ -12,49 +12,46 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
 }
 
 html,
 body {
     width: 100%;
     height: 100%;
+    height: 100dvh; /* Mobile dynamic viewport height */
     overflow: hidden;
     background: #000;
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    user-select: none;
+    touch-action: manipulation;
 }
 
 canvas {
     position: fixed;
     inset: 0;
-
     width: 100%;
     height: 100%;
-
     display: block;
+    z-index: 1;
 }
 
 #finalImage {
     position: fixed;
-
     inset: 0;
-
-    width: 100vw;
-    height: 100vh;
-
-    object-fit: cover;
-
+    object-fit: contain; /* Flexible fit across mobile, tablet, laptop */
     opacity: 0;
-
     pointer-events: none;
-
     transition: opacity 1s ease;
+    z-index: 2;
+    margin: auto;
 }
 
 /* File selection & error overlay */
 #fileOverlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.9);
+    background: rgba(0, 0, 0, 0.92);
     color: #fff;
     display: flex;
     flex-direction: column;
@@ -62,59 +59,80 @@ canvas {
     justify-content: center;
     z-index: 100;
     text-align: center;
-    padding: 20px;
+    padding: 24px;
+    backdrop-filter: blur(10px);
 }
 
 .file-btn {
     background: #2563eb;
     color: #fff;
     border: none;
-    padding: 12px 28px;
+    padding: 14px 32px;
     font-size: 16px;
-    font-weight: bold;
+    font-weight: 600;
     border-radius: 30px;
     cursor: pointer;
-    margin-top: 20px;
-    transition: background 0.2s ease;
+    margin-top: 24px;
+    box-shadow: 0 4px 20px rgba(37, 99, 235, 0.4);
+    transition: transform 0.2s ease, background 0.2s ease;
 }
 
-.file-btn:hover {
-    background: #1d4ed8;
+.file-btn:active {
+    transform: scale(0.96);
 }
 
 #fileInput {
     display: none;
 }
 
+/* Tap to replay hint for mobile */
+.tap-hint {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    pointer-events: none;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+}
+
+.tap-hint.visible {
+    opacity: 1;
+}
+
 </style>
 </head>
-
 
 <body>
 
 <canvas id="canvas"></canvas>
 
 <!-- Final Photo -->
-<img
-    id="finalImage"
-    alt="Final Photo"
->
+<img id="finalImage" alt="Final Photo">
+
+<div class="tap-hint" id="tapHint">Tap anywhere to restart</div>
 
 <div id="fileOverlay" style="display: none;">
-    <h2>Select Image from images/ folder</h2>
-    <p style="color: #ccc; margin-top: 8px;">Browser security requires selecting your image when running directly from file link.</p>
-    <button class="file-btn" onclick="document.getElementById('fileInput').click()">Choose Image</button>
+    <h2 style="font-size: 22px; font-weight: 600;">Select Your Photo</h2>
+    <p style="color: #aaa; margin-top: 10px; font-size: 14px; max-width: 320px;">
+        Tap below to choose any photo from your device gallery or camera.
+    </p>
+    <button class="file-btn" onclick="document.getElementById('fileInput').click()">Choose Photo</button>
 </div>
 
 <input type="file" id="fileInput" accept="image/*">
 
-
 <script>
 
 /*
-    ============================
-    PHOTO SETTINGS & CANDIDATES
-    ============================
+    ========================================================
+    RESPONSIVE PIXEL POP PHOTO REVEAL (MOBILE / TABLET / PC)
+    ========================================================
 */
 
 const CANDIDATE_SOURCES = [
@@ -127,25 +145,29 @@ const CANDIDATE_SOURCES = [
     "images/photo.bmp",
     "images/photo.gif",
     "images/photo",
+    "images/myphoto.jpg",
+    "images/venkateswara.jpg",
+    "images/chandu2.jpeg",
     "photo.jpg",
     "photo.jpeg",
     "photo.png",
     "photo.webp"
 ];
 
-let IMAGE_NAME = "images/photo.jpg";
+const FALLBACK_DATA_URL = "";
 
-const REVEAL_TIME = 6000;
-const PARTICLE_STEP = 5;
-const PARTICLE_SIZE = 3;
-const POP_DURATION = 350;
-const BRIGHTNESS = 1.22;
+let REVEAL_TIME = 5500;
+let PARTICLE_STEP = 5;
+let PARTICLE_SIZE = 3.5;
+let POP_DURATION = 360;
+let BRIGHTNESS = 1.22;
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const finalImage = document.getElementById("finalImage");
 const fileOverlay = document.getElementById("fileOverlay");
 const fileInput = document.getElementById("fileInput");
+const tapHint = document.getElementById("tapHint");
 
 let image = new Image();
 
@@ -157,23 +179,53 @@ let imageX = 0;
 let imageY = 0;
 let particles = [];
 let animationStart = 0;
+let animFrameId = null;
+let isRevealed = false;
+
+// Device Pixel Ratio (DPI) handling for sharp mobile rendering
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
 
 function resize() {
-    width = window.innerWidth;
-    height = window.innerHeight;
-    canvas.width = width;
-    canvas.height = height;
+    width = window.innerWidth || document.documentElement.clientWidth;
+    height = window.innerHeight || document.documentElement.clientHeight;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+
+    // Dynamic particle sizing based on screen resolution
+    if (width < 600) {
+        // Mobile screen adjustments
+        PARTICLE_STEP = 4;
+        PARTICLE_SIZE = 3.2;
+    } else if (width < 1024) {
+        // Tablet screen adjustments
+        PARTICLE_STEP = 5;
+        PARTICLE_SIZE = 3.5;
+    } else {
+        // Desktop / Laptop screen adjustments
+        PARTICLE_STEP = 5;
+        PARTICLE_SIZE = 3.6;
+    }
+
     if (image.complete && image.naturalWidth > 0) {
         calculateImage();
     }
 }
 
 window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", () => setTimeout(resize, 200));
 resize();
 
 /*
     ============================
-    DYNAMIC IMAGE DISCOVERY
+    IMAGE DISCOVERY & LOADING
     ============================
 */
 
@@ -187,7 +239,6 @@ function discoverImage() {
 
             const testImg = new Image();
             testImg.onload = function () {
-                IMAGE_NAME = src;
                 loadPhotoSource(src);
             };
             testImg.onerror = function () {
@@ -195,8 +246,11 @@ function discoverImage() {
             };
             testImg.src = src + "?t=" + Date.now();
         } else {
-            // Show file selector if auto-discovery fails or file:// blocks
-            fileOverlay.style.display = "flex";
+            if (FALLBACK_DATA_URL && FALLBACK_DATA_URL.length > 50) {
+                loadPhotoSource(FALLBACK_DATA_URL);
+            } else {
+                fileOverlay.style.display = "flex";
+            }
         }
     }
 
@@ -206,28 +260,36 @@ function discoverImage() {
 function loadPhotoSource(src) {
     fileOverlay.style.display = "none";
     finalImage.style.opacity = "0";
+    tapHint.classList.remove("visible");
+    isRevealed = false;
+
+    if (animFrameId) cancelAnimationFrame(animFrameId);
 
     image = new Image();
     image.onload = function () {
         calculateImage();
         const success = createParticles();
         if (success) {
-            setTimeout(startAnimation, 300);
+            startAnimation();
         }
     };
     image.onerror = function () {
-        fileOverlay.style.display = "flex";
+        if (FALLBACK_DATA_URL && FALLBACK_DATA_URL.length > 50 && src !== FALLBACK_DATA_URL) {
+            loadPhotoSource(FALLBACK_DATA_URL);
+        } else {
+            fileOverlay.style.display = "flex";
+        }
     };
     image.src = src;
     finalImage.src = src;
 }
 
-// Start auto-discovery
+// Start discovery
 discoverImage();
 
 /*
     ============================
-    FILE INPUT & DRAG DROP
+    FILE SELECTION & TOUCH / DRAG
     ============================
 */
 
@@ -253,11 +315,31 @@ function readAndLoadFile(file) {
     reader.readAsDataURL(file);
 }
 
+// Touch and click anywhere to restart once revealed
+function handleTap() {
+    if (isRevealed) {
+        startAnimation();
+    }
+}
+window.addEventListener("click", handleTap);
+window.addEventListener("touchstart", (e) => {
+    if (isRevealed && !e.target.closest('#fileOverlay') && !e.target.closest('.file-btn')) {
+        handleTap();
+    }
+}, { passive: true });
+
+/*
+    ================================================
+    CALCULATE PERFECT IMAGE FIT (MOBILE/TABLET/PC)
+    ================================================
+*/
+
 function calculateImage() {
     const originalWidth = image.naturalWidth;
     const originalHeight = image.naturalHeight;
 
-    const scale = Math.max(
+    // Use contain mode so 100% of photo is visible without cropping on any mobile/tablet/PC screen
+    const scale = Math.min(
         width / originalWidth,
         height / originalHeight
     );
@@ -274,6 +356,12 @@ function calculateImage() {
     finalImage.style.top = imageY + "px";
 }
 
+/*
+    ============================
+    CREATE PARTICLES
+    ============================
+*/
+
 function createParticles() {
     particles = [];
 
@@ -289,7 +377,11 @@ function createParticles() {
     try {
         imageData = tempCtx.getImageData(0, 0, imageWidth, imageHeight);
     } catch (err) {
-        console.warn("Canvas tainted on file:// protocol. Prompting file selector...", err);
+        console.warn("Canvas read error:", err);
+        if (FALLBACK_DATA_URL && FALLBACK_DATA_URL.length > 50 && image.src !== FALLBACK_DATA_URL) {
+            loadPhotoSource(FALLBACK_DATA_URL);
+            return false;
+        }
         fileOverlay.style.display = "flex";
         return false;
     }
@@ -302,7 +394,7 @@ function createParticles() {
             let b = imageData.data[index + 2];
             const a = imageData.data[index + 3];
 
-            if (a < 80) continue;
+            if (a < 60) continue;
 
             r = Math.min(255, r * BRIGHTNESS);
             g = Math.min(255, g * BRIGHTNESS);
@@ -315,14 +407,17 @@ function createParticles() {
             particles.push({
                 x: targetX,
                 y: targetY,
-                r: r,
-                g: g,
-                b: b,
+                r: Math.round(r),
+                g: Math.round(g),
+                b: Math.round(b),
                 size: PARTICLE_SIZE,
                 delay: delay
             });
         }
     }
+
+    // Shuffle for natural appearance
+    particles.sort(() => Math.random() - 0.5);
     return true;
 }
 
@@ -333,8 +428,12 @@ function easeOutBack(t) {
 }
 
 function startAnimation() {
+    if (animFrameId) cancelAnimationFrame(animFrameId);
+    finalImage.style.opacity = "0";
+    tapHint.classList.remove("visible");
+    isRevealed = false;
     animationStart = performance.now();
-    requestAnimationFrame(animate);
+    animFrameId = requestAnimationFrame(animate);
 }
 
 function animate(timestamp) {
@@ -353,12 +452,12 @@ function animate(timestamp) {
         const pop = easeOutBack(progress);
         const size = Math.max(0, p.size * pop);
 
-        ctx.fillStyle = 'rgb(' + Math.round(p.r) + ',' + Math.round(p.g) + ',' + Math.round(p.b) + ')';
+        ctx.fillStyle = 'rgb(' + p.r + ',' + p.g + ',' + p.b + ')';
         ctx.fillRect(p.x - size / 2, p.y - size / 2, size, size);
     }
 
     if (elapsed < REVEAL_TIME + POP_DURATION) {
-        requestAnimationFrame(animate);
+        animFrameId = requestAnimationFrame(animate);
     } else {
         finishReveal();
     }
@@ -369,18 +468,21 @@ function finishReveal() {
 
     for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
-        ctx.fillStyle = 'rgb(' + Math.round(p.r) + ',' + Math.round(p.g) + ',' + Math.round(p.b) + ')';
+        ctx.fillStyle = 'rgb(' + p.r + ',' + p.g + ',' + p.b + ')';
         ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
 
-    setTimeout(revealPhoto, 700);
+    setTimeout(revealPhoto, 600);
 }
 
 function revealPhoto() {
     finalImage.style.opacity = "1";
+    isRevealed = true;
+    setTimeout(() => {
+        tapHint.classList.add("visible");
+    }, 400);
 }
 
 </script>
-
 </body>
 </html>
